@@ -1,0 +1,205 @@
+@Author :      lance
+@Email :   wangyl306@163.com
+@Time :     2019年6月10日
+
+===================模型选择=========================
+1.先选择简单的模型进行fine-tune
+2.fine-tune步骤：
+    最后一层
+    最后一个卷积块
+    全网络
+3.迁移学习中，目标域和源域差别较大，不用fc的网络比用fc的网络效果差
+
+
+
+
+
+===================加载数据=========================
+    model.load_data.py
+1.path,batch_size（10，16）
+2.input_shape根据模型默认尺寸确定，显存足够的话可以考虑增大模型输入尺寸，相应需要减小batch_size
+3.Augmentation在ImageDataGenerator中修改相关参数即可，参考https://www.cnblogs.com/hutao722/p/10075150.html
+4.classes=["","",""] 定义自己的类别名
+***注意***.flow_from_directory中的shuffle=True是默认的，训练和验证时不用修改，但是用作测试时候一定要改为False
+5.rescale=1/255
+
+
+===================模型训练=========================
+    model.train.py
+1.参数：classes = 3
+    epochs = 200
+    steps_per_epoch >= train_nums//batch
+    validation_steps >= valid_nums//batch
+
+2.模型函数所需的input_shape形参，根据各模型而定   ----注意，必须是元组类型
+3.weights:保存在验证集上最高acc的模型文件
+4.logs：训练过程记录
+5.如果使用tensorboard将其添加到callback中(已经定义好了)
+6.学习率设定为监控验证集loss,经过10个loss不变则降低为之前的1/2
+7.训练时候一定记得开多线程workers=16
+
+
+
+===================模型测试=========================
+    test.py
+1.path:模型文件
+2.steps=test_nums/batch
+3.input_shape:对应模型的默认输入尺寸
+4.注意：修改测试文件的位置，classes=["","",""] 定义自己的类别名，shuffle=False
+
+
+
+
+===================预测=========================
+    predict.py
+predict("weights/bcnn.h5","data/test/B",[224,224])
+
+
+===================继续训练=========================
+    model.continue_train.py
+continue_train(path,epochs,steps_per_epoch,validation_steps,input_shape)
+
+
+
+===================显存问题 GTX1060=========================
+1.resnext：56,56
+2.senet:64,64
+3.octconv:显存不够
+
+
+
+
+===================bug整理=========================
+1.问题：AttributeError: 'bytes' object has no attribute 'encode'
+  解决方法：修改C:\Anaconda3\envs\wyl\lib\site-packages\keras\engine\saving.py中的321行:n.encode('utf8') for n in
+            如果是encode则改为decode,反之相反
+2.读图方式的差异
+    skimage和keras系列的不同
+        注意：skimage的transform.resize已经除了255，不用再除255了
+    keras系列的相同
+    keras系列包括：from keras.preprocessing import image
+                  ImageDataGenerator
+    eg.120张c4使用同样的模型，kerse系列识别率92.5%,skimage识别率为93.3%
+3.训练测试关于BN层的设置https://blog.datumbox.com/the-batch-normalization-layer-of-keras-is-broken/
+
+
+===================GPU加速=========================
+结论：
+	第一：keras跑现有模型都能使用单GPU或多GPU（GTX1060，RTX2080ti）加速，配置环境NVIDIA driver 410 以上版本，cuda 9.0以上版本即可。
+	第二：keras数据预处理速度慢，是限制训练的根本。
+	第三：踢除GPU，ubuntu18.04台式机的硬件配置在训练加速上不如win10台式机。
+	第四：keras训练分类模型：
+		参数设置workers=32(大一些好）, use_multiprocessing=False(True会快一些）, max_queue_size=20(大一些好），太大没有意义CPU跑满了；
+		现在跑分类模型最快平均一个epoch（148 for train 30 for val）9s左右。
+
+
+data:
+Found 148 images belonging to 3 classes.
+Found 30 images belonging to 3 classes.
+
+keras.fit_generator设定
+workers=32, use_multiprocessing=False, max_queue_size=10
+
+	win10台式机CPU16线程，内存32G：CPU占用75~79%，内存占用6G
+	RTX2080ti 最大11GB 可用8.99GB
+		vgg16(20,5,1)
+		batch = 30，根据batch调整Train_steps和validation_steps
+		20 epochs of batch 30 takes total time 197.78
+		vgg16(20,10,2)
+		batch = 15
+		20 epochs of batch 15 takes total time 185.68
+		vgg16(20,15,3)
+		batch = 10
+		20 epochs of batch 10 takes total time 182.57
+		vgg16(20,25,5)
+		batch = 6
+		20 epochs of batch 6 takes total time 178.18
+
+
+	win10台式机CPU16线程，内存32G：CPU占用76~83%，内存占用5.3~5.6G
+	GTX1060 最大6GB 可用4.97GB
+		batch = 30
+		20 epochs of batch 30 takes total time 201.05
+		warning:Allocator (GPU_0_bfc) ran out of memory trying to allocate 2.26GiB. The caller indicates that this is not a failure, but may mean that there could be performance gains if more memory were available.
+		batch = 15
+		20 epochs of batch 15 takes total time  201.77
+		batch = 10
+		20 epochs of batch 10 takes total time 194.74
+		batch = 6
+		20 epochs of batch 6 takes total time 188.67
+
+
+	ubuntu18.04台式机：CPU 20线程，内存64G
+	峰值15-16 thread runing，70%~80%CPU占用
+	RTX2080ti 最大10.72GB 可用10.33GB
+	峰值56%
+		batch = 30
+		20 epochs of batch 30 takes total time 404.95
+		batch = 15
+		20 epochs of batch 15 takes total time 377.54
+		batch = 10
+		20 epochs of batch 10 takes total time 385.09
+		batch = 6
+		20 epochs of batch 6 takes total time 371.07
+
+
+keras.fit_generator设定
+workers=32, use_multiprocessing=False, max_queue_size=20
+
+	ubuntu18.04台式机：CPU 20线程，内存64G
+	峰值20 thread runing，90+%CPU占用
+	RTX2080ti 最大10.72GB 可用10.33GB
+	峰值93%
+		vgg16(20,5,1)
+		batch = 30
+		20 epochs of batch 30 takes total time 399.53
+		对比max_queue_size=10..有加快，
+
+	ubuntu18.04台式机：CPU 20线程，内存64G
+	峰值20 thread runing，90+%CPU占用
+	双RTX2080ti 最大10.72GB 一个可用10.33GB 一个可用10.53GB
+	第一个epoch 一个80+%一个90+%（数值只是相对准确）
+	正常epoch峰值一个52%一个51%
+		batch = 30
+		20 epochs of batch 30 takes total time 399.55
+		batch = 15
+		20 epochs of batch 15 takes total time 391.86
+		batch = 10
+		20 epochs of batch 10 takes total time 354.00
+		batch = 6
+		20 epochs of batch 6 takes total time 344.01
+
+keras.fit_generator设定
+workers=32, use_multiprocessing=True, max_queue_size=20
+
+	ubuntu18.04台式机：CPU 20线程，内存64G
+	峰值20 thread runing，100%CPU占用（所有thred全部100%）
+	双RTX2080ti 最大10.72GB 一个可用10.33GB 一个可用10.53GB
+	第一个epoch 一个80+%一个90+%
+	正常epoch峰值一个54%一个40%
+		batch = 30
+		20 epochs of batch 30 takes total time 389.52
+		batch = 15
+		20 epochs of batch 15 takes total time 378.32
+		batch = 10
+		20 epochs of batch 10 takes total time 346.65
+		batch = 6
+		20 epochs of batch 6 takes total time 338.29
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
